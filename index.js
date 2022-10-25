@@ -1,6 +1,6 @@
 const express = require("express");
 const app = express();
-const port = process.env.PORT || 8000;
+const port = process.env.PORT || 9000;
 const cors = require("cors");
 const { MongoClient, ServerApiVersion } = require("mongodb");
 require("dotenv").config();
@@ -9,7 +9,7 @@ require("dotenv").config();
 app.use(cors()); // For avoiding cors policy error
 app.use(express.json()); // avoiding body parse json error
 
-//MongoDb connection Start
+//<----MongoDb connection config Start----->
 
 //MongoDB user Config from mongodb and securing PASS and User by dotenv
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.uvdy64o.mongodb.net/?retryWrites=true&w=majority`;
@@ -48,7 +48,7 @@ async function run() {
       res.send(bookingresult);
     });
 
-    // Loading or Creating own server api READ data from Mongodb
+    // Loading or Creating own server api READ data from travellersDb.services
 
     app.get("/services", async (req, res) => {
       const query = {};
@@ -56,13 +56,22 @@ async function run() {
       const tasklistfromdb = await cursor.toArray();
       res.send(tasklistfromdb);
     });
-    //  READ  own server api for bookingdat READ data from Mongodb
+
+    //  READ  own server api for bookingdata READ data from Mongodb
 
     app.get("/bookingdata", async (req, res) => {
       const query = {};
       const cursor = bookingCollection.find(query);
       const bookingDatafromDb = await cursor.toArray();
       res.send(bookingDatafromDb);
+    });
+
+    // ! DELETE data from Mongodb
+    app.delete("/services/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: ObjectId(id) };
+      const deletedResult = await serviceCollection.deleteOne(query);
+      res.send(deletedResult);
     });
   } finally {
     // Ensures that the client will close when you finish/error
