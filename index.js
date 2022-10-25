@@ -67,11 +67,19 @@ async function run() {
     });
 
     // ! DELETE data from Mongodb
-    app.delete("/services/:id", async (req, res) => {
-      const id = req.params.id;
+    app.delete("/services/:_id", async (req, res) => {
+      const id = req.params._id;
       const query = { _id: ObjectId(id) };
       const deletedResult = await serviceCollection.deleteOne(query);
       res.send(deletedResult);
+    });
+
+    //! Read A specific Document from DB by id
+    app.get("/services/:id", async (req, res) => {
+      const specificDoc = req.params._id;
+      const query = { _id: ObjectId(specificDoc) };
+      const result = await taskCollection.findOne(query);
+      res.send(result);
     });
   } finally {
     // Ensures that the client will close when you finish/error
