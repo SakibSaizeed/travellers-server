@@ -28,14 +28,24 @@ async function run() {
 
     // Establish and verify connection
     const serviceCollection = client.db("travellersDb").collection("services");
+    const bookingCollection = client.db("travellersDb").collection("booking");
 
-    // receiving post method data from client side & ADD to Db
+    // receiving post method service data from client side & ADD to Db
 
     app.post("/servicedata", async (req, res) => {
       const servicedata = req.body;
       // ADD single data to DATABASE
       const result = await serviceCollection.insertOne(servicedata);
       res.send(result);
+    });
+
+    // receiving post method booking data from client side & ADD to travellersDb.booking
+
+    app.post("/bookingdata", async (req, res) => {
+      const bookingdata = req.body; //data inputed from client booking ui
+      // ADD single data to DATABASE
+      const bookingresult = await bookingCollection.insertOne(bookingdata);
+      res.send(bookingresult);
     });
 
     // Loading or Creating own server api READ data from Mongodb
@@ -45,6 +55,14 @@ async function run() {
       const cursor = serviceCollection.find(query);
       const tasklistfromdb = await cursor.toArray();
       res.send(tasklistfromdb);
+    });
+    //  READ  own server api for bookingdat READ data from Mongodb
+
+    app.get("/bookingdata", async (req, res) => {
+      const query = {};
+      const cursor = bookingCollection.find(query);
+      const bookingDatafromDb = await cursor.toArray();
+      res.send(bookingDatafromDb);
     });
   } finally {
     // Ensures that the client will close when you finish/error
