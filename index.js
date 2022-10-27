@@ -1,10 +1,10 @@
 const express = require("express");
 const app = express();
-const port = process.env.PORT || 9000;
+const port = process.env.PORT || 5000;
 const cors = require("cors");
 const { MongoClient, ServerApiVersion } = require("mongodb");
 require("dotenv").config();
-
+const ObjectId = require("mongodb").ObjectId; //!MUST REQUIRE FOR OBJECT ID FINDING
 //MiddleWare
 app.use(cors()); // For avoiding cors policy error
 app.use(express.json()); // avoiding body parse json error
@@ -67,8 +67,8 @@ async function run() {
     });
 
     // ! DELETE data from Mongodb
-    app.delete("/services/:_id", async (req, res) => {
-      const id = req.params._id;
+    app.delete("/services/:id", async (req, res) => {
+      const id = req.params.id;
       const query = { _id: ObjectId(id) };
       const deletedResult = await serviceCollection.deleteOne(query);
       res.send(deletedResult);
@@ -76,10 +76,10 @@ async function run() {
 
     //! Read A specific Document from DB by id
     app.get("/services/:id", async (req, res) => {
-      const specificDoc = req.params._id;
-      const query = { _id: ObjectId(specificDoc) };
-      const result = await taskCollection.findOne(query);
-      res.send(result);
+      const id = req.params.id;
+      const query = { _id: ObjectId(id) };
+      const serviceapi = await serviceCollection.findOne(query);
+      res.send(serviceapi);
     });
   } finally {
     // Ensures that the client will close when you finish/error
