@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const compression = require("compression");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 
@@ -24,18 +26,100 @@ const client = new MongoClient(uri, {
   serverSelectionTimeoutMS: 8000,
 });
 
+const JWT_SECRET = process.env.JWT_SECRET || "dev-only-insecure-secret-change-me";
+if (!process.env.JWT_SECRET) {
+  console.warn(
+    "JWT_SECRET is not set — using an insecure default. Set a real JWT_SECRET in your environment before deploying."
+  );
+}
+
 let serviceCollection;
 let bookingCollection;
+let usersCollection;
 
 const isValidId = (id) => ObjectId.isValid(id) && String(new ObjectId(id)) === id;
+
+// Protects routes that require a logged-in user. Expects "Authorization: Bearer <token>".
+const verifyJWT = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).send({ message: "Unauthorized access" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  jwt.verify(token, JWT_SECRET, (error, decoded) => {
+    if (error) {
+      return res.status(403).send({ message: "Forbidden access" });
+    }
+    req.decoded = decoded;
+    next();
+  });
+};
 
 // server side url port running check
 app.get("/", (req, res) => {
   res.send("Welcome to Travellers Server");
 });
 
+// Create an account and sign in immediately with a JWT
+app.post("/register", async (req, res) => {
+  try {
+    const { name, password } = req.body;
+    const email = req.body.email?.toLowerCase().trim();
+
+    if (!name || !email || !password) {
+      return res.status(400).send({ message: "Name, email and password are required" });
+    }
+    if (password.length < 6) {
+      return res.status(400).send({ message: "Password must be at least 6 characters" });
+    }
+
+    const existingUser = await usersCollection.findOne({ email });
+    if (existingUser) {
+      return res.status(409).send({ message: "An account with this email already exists" });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await usersCollection.insertOne({ name, email, password: hashedPassword, createdAt: new Date() });
+
+    const token = jwt.sign({ email, name }, JWT_SECRET, { expiresIn: "7d" });
+    res.status(201).send({ token, user: { name, email } });
+  } catch (error) {
+    console.error("POST /register failed:", error);
+    res.status(500).send({ message: "Failed to register" });
+  }
+});
+
+// Verify credentials and issue a JWT
+app.post("/login", async (req, res) => {
+  try {
+    const email = req.body.email?.toLowerCase().trim();
+    const { password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).send({ message: "Email and password are required" });
+    }
+
+    const existingUser = await usersCollection.findOne({ email });
+    if (!existingUser) {
+      return res.status(401).send({ message: "Invalid email or password" });
+    }
+
+    const passwordMatches = await bcrypt.compare(password, existingUser.password);
+    if (!passwordMatches) {
+      return res.status(401).send({ message: "Invalid email or password" });
+    }
+
+    const token = jwt.sign({ email, name: existingUser.name }, JWT_SECRET, { expiresIn: "7d" });
+    res.send({ token, user: { name: existingUser.name, email } });
+  } catch (error) {
+    console.error("POST /login failed:", error);
+    res.status(500).send({ message: "Failed to log in" });
+  }
+});
+
 // receiving post method service data from client side & ADD to Db
-app.post("/servicedata", async (req, res) => {
+app.post("/servicedata", verifyJWT, async (req, res) => {
   try {
     const servicedata = req.body;
     const result = await serviceCollection.insertOne(servicedata);
@@ -47,9 +131,10 @@ app.post("/servicedata", async (req, res) => {
 });
 
 // receiving post method booking data from client side & ADD to travellersDb.booking
-app.post("/bookingdata", async (req, res) => {
+app.post("/bookingdata", verifyJWT, async (req, res) => {
   try {
     const bookingdata = req.body; //data inputed from client booking ui
+    bookingdata.ownerEmail = req.decoded.email; // authoritative owner, used to scope GET /bookingdata
     const bookingresult = await bookingCollection.insertOne(bookingdata);
     res.send(bookingresult);
   } catch (error) {
@@ -59,16 +144,16 @@ app.post("/bookingdata", async (req, res) => {
 });
 
 // Loading or Creating own server api READ data from travellersDb.services
-// Supports optional ?search=&category=&location=&sort=price_asc|price_desc|rating&limit=
+// Supports optional ?search=&category=&destination=&sort=price_asc|price_desc|rating&limit=
 // With no query params it behaves exactly as before (full array), so existing client calls keep working.
 app.get("/services", async (req, res) => {
   try {
-    const { search, category, location, sort, limit } = req.query;
+    const { search, category, destination, sort, limit } = req.query;
 
     const query = {};
     if (search) query.$text = { $search: search };
     if (category) query.category = category;
-    if (location) query.location = location;
+    if (destination) query.destination = destination;
 
     const sortOptions = {};
     if (sort === "price_asc") sortOptions.price = 1;
@@ -91,9 +176,14 @@ app.get("/services", async (req, res) => {
 });
 
 //  READ  own server api for bookingdata READ data from Mongodb
-app.get("/bookingdata", async (req, res) => {
+// Scoped to the logged-in user so one traveller can't see another's bookings.
+// Falls back to matching the old "email" field for bookings made before ownerEmail existed.
+app.get("/bookingdata", verifyJWT, async (req, res) => {
   try {
-    const query = {};
+    const email = req.decoded.email;
+    const query = {
+      $or: [{ ownerEmail: email }, { ownerEmail: { $exists: false }, email }],
+    };
     const cursor = bookingCollection.find(query);
     const bookingDatafromDb = await cursor.toArray();
     res.send(bookingDatafromDb);
@@ -121,7 +211,7 @@ app.get("/services/:id", async (req, res) => {
   }
 });
 
-// Related tours: other tours sharing the same category (falls back to location), for a
+// Related tours: other tours sharing the same category (falls back to destination), for a
 // "related tours" section on the client's tour details page.
 app.get("/services/:id/related", async (req, res) => {
   try {
@@ -140,8 +230,8 @@ app.get("/services/:id/related", async (req, res) => {
 
     if (current.category) {
       matchStage.category = current.category;
-    } else if (current.location) {
-      matchStage.location = current.location;
+    } else if (current.destination) {
+      matchStage.destination = current.destination;
     }
 
     let related = await serviceCollection.find(matchStage).limit(limitNum).toArray();
@@ -164,7 +254,7 @@ app.get("/services/:id/related", async (req, res) => {
 });
 
 // ! DELETE data from Mongodb
-app.delete("/services/:id", async (req, res) => {
+app.delete("/services/:id", verifyJWT, async (req, res) => {
   try {
     const id = req.params.id;
     if (!isValidId(id)) {
@@ -185,13 +275,16 @@ async function run() {
 
   serviceCollection = client.db("travellersDb").collection("services");
   bookingCollection = client.db("travellersDb").collection("booking");
+  usersCollection = client.db("travellersDb").collection("users");
 
   // Indexes so filtering/searching/sorting stay fast as the collection grows
   await Promise.all([
     serviceCollection.createIndex({ category: 1 }),
-    serviceCollection.createIndex({ location: 1 }),
-    serviceCollection.createIndex({ title: "text", name: "text", description: "text" }),
+    serviceCollection.createIndex({ destination: 1 }),
+    serviceCollection.createIndex({ packageName: "text", destination: "text", description: "text" }),
     bookingCollection.createIndex({ email: 1 }),
+    bookingCollection.createIndex({ ownerEmail: 1 }),
+    usersCollection.createIndex({ email: 1 }, { unique: true }),
   ]);
 
   app.listen(port, () => {
