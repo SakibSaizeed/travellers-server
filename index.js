@@ -268,6 +268,27 @@ app.delete("/services/:id", verifyJWT, async (req, res) => {
   }
 });
 
+// MongoDB allows only one text index per collection. If the service document's
+// searchable fields changed since the last deploy (e.g. name/title -> packageName),
+// the old text index conflicts with this one (error code 85, IndexOptionsConflict) —
+// replace it instead of crashing the server on every restart.
+async function ensureTextIndex(collection, spec) {
+  try {
+    await collection.createIndex(spec);
+  } catch (error) {
+    if (error.code !== 85 && error.code !== 86) {
+      throw error;
+    }
+    const staleTextIndex = (await collection.indexes()).find((index) => index.key._fts === "text");
+    if (!staleTextIndex) {
+      throw error;
+    }
+    console.warn(`Replacing stale text index "${staleTextIndex.name}" on ${collection.collectionName}`);
+    await collection.dropIndex(staleTextIndex.name);
+    await collection.createIndex(spec);
+  }
+}
+
 //Async function to connect & Operate mongo, then only start accepting traffic once
 //the DB + indexes are ready (avoids "Cannot GET /services" race on a cold start).
 async function run() {
@@ -281,7 +302,7 @@ async function run() {
   await Promise.all([
     serviceCollection.createIndex({ category: 1 }),
     serviceCollection.createIndex({ destination: 1 }),
-    serviceCollection.createIndex({ packageName: "text", destination: "text", description: "text" }),
+    ensureTextIndex(serviceCollection, { packageName: "text", destination: "text", description: "text" }),
     bookingCollection.createIndex({ email: 1 }),
     bookingCollection.createIndex({ ownerEmail: 1 }),
     usersCollection.createIndex({ email: 1 }, { unique: true }),
